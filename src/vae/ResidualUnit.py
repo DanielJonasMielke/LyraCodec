@@ -24,14 +24,11 @@ class ResidualUnit(nn.Module):
             nn.Conv1d(
                 in_channels=channels,
                 out_channels=channels,
-                kernel_size=1  # 1x1 conv
+                kernel_size=1 
             )
         )
     
     def forward(self, x):
-        # Save input for skip connection
         residual = x
-        # Apply transformations
         x = self.layers(x)
-        # Add skip connection
         return x + residual

@@ -11,15 +11,13 @@ class EncoderBlock(nn.Module):
     def __init__(self, in_channels, out_channels, stride):
         super().__init__()
         
-        # 3 Residual Units with different dilations
         self.res1 = ResidualUnit(in_channels, dilation=1)
         self.res2 = ResidualUnit(in_channels, dilation=3)
         self.res3 = ResidualUnit(in_channels, dilation=9)
         
-        # Activation before downsampling
+        # Activation BEFORE downsampling
         self.activation = SnakeActivation(in_channels)
         
-        # kernel_size = 2 * stride, padding to keep things aligned
         self.downsample = nn.Conv1d(
             in_channels=in_channels,
             out_channels=out_channels,
@@ -29,7 +27,7 @@ class EncoderBlock(nn.Module):
         )
     
     def forward(self, x):
-        # Apply 3 residual units
+        # Apply all residual units
         x = self.res1(x)
         x = self.res2(x)
         x = self.res3(x)

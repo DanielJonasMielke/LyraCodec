@@ -5,8 +5,8 @@ class SnakeActivation(nn.Module):
     def __init__(self, channels):
         super().__init__()
         # Initialize in LOG space (as zeros)
-        self.alpha = nn.Parameter(torch.ones(channels))
-        self.beta = nn.Parameter(torch.ones(channels))
+        self.alpha = nn.Parameter(torch.zeros(channels))
+        self.beta = nn.Parameter(torch.zeros(channels))
     
     def forward(self, x):
         alpha = self.alpha.unsqueeze(0).unsqueeze(-1) # unsqueeze adds dimension at the start (batch) and unsqueeze(-1) at the end (time)

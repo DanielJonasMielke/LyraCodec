@@ -89,18 +89,30 @@ class VAE(nn.Module):
 
         x = self.distribution_conv(x) # (2048, 43) -> (128, 43)
         
-        mu, logvar = torch.chunk(x, 2, dim=1)
+        mu, logvar = torch.chunk(x, 2, dim=1) # Each of shape (64, 43)
 
         return mu, logvar
+
+    def reparameterization(self, mu, logvar):
+        """Sample z from the distributrion using the reparameterization trick
+
+        Args:
+            mu (Tensor): the mean
+            logvar (Tensor): the variance stored in logspace
+        """
+        eps = torch.randn_like(mu)
+        z = mu + eps * torch.sqrt(torch.exp(logvar))
+        return z
     
     def forward(self, x):
         mu, logvar = self.encode(x)
-        return mu, logvar
+        z = self.reparameterization(mu, logvar)
+        return mu, logvar, z
 
 
 if __name__ == "__main__":
     vae = VAE()
     audio = torch.randn(1, 2, 88200)
-    mu, logvar = vae(audio)
+    mu, logvar, z = vae(audio)
     print(f"mu shape: {mu.shape}")  # Should be [1, 64, 43]
     print(f"logvar shape: {logvar.shape}")  # Should be [1, 64, 43]

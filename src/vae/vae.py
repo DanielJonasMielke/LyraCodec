@@ -1,60 +1,9 @@
-import math
 import torch
 import torch.nn as nn
 
 from .SnakeActivation import SnakeActivation
-from .ResidualUnit import ResidualUnit
-
-class EncoderBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, stride):
-        super().__init__()
-
-        self.layers = nn.Sequential(
-            ResidualUnit(in_channels, dilation=1), # Local scale Residual dilation
-            ResidualUnit(in_channels, dilation=3), # mid-scale Residual dilation
-            ResidualUnit(in_channels, dilation=9), # Larger Scale Residual dilation
-
-            SnakeActivation(in_channels),
-
-            # Downsample to desired size
-            nn.Conv1d(
-                in_channels=in_channels,
-                out_channels=out_channels,
-                kernel_size=2 * stride,
-                stride=stride,
-                padding=math.ceil(stride / 2)
-            )
-        )
-
-    def forward(self, x):
-        x = self.layers(x)
-        return x
-    
-class DecoderBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, stride):
-        super().__init__()
-
-        self.layers = nn.Sequential(
-            ResidualUnit(in_channels, dilation=1), # Local scale Residual dilation
-            ResidualUnit(in_channels, dilation=3), # mid-scale Residual dilation
-            ResidualUnit(in_channels, dilation=9), # Larger Scale Residual dilation
-
-            SnakeActivation(in_channels),
-
-            # Upsample to desired size
-            nn.ConvTranspose1d(
-                in_channels=in_channels,
-                out_channels=out_channels,
-                kernel_size=2 * stride,
-                stride=stride,
-                padding=math.ceil(stride / 2),
-                output_padding=stride % 2  # THIS IS THE MISSING PIECE
-            )
-        )
-
-    def forward(self, x):
-        x = self.layers(x)
-        return x
+from .EncoderBlock import EncoderBlock
+from .DecoderBlock import DecoderBlock
 
 class VAE(nn.Module):
     def __init__(self,
@@ -68,7 +17,9 @@ class VAE(nn.Module):
         super().__init__()
         
         self.in_channels = in_channels
+        self.encoder_shapes = []
         
+        # ----------------- ENCODER PROPERTIES ----------------- 
         # First layer: stereo audio (2 channels) -> 128 feature channels
         self.encoder_init = nn.Conv1d(
             in_channels=in_channels,
@@ -91,7 +42,7 @@ class VAE(nn.Module):
 
         self.encoder_final_activation = SnakeActivation(base_channels * c_mults[-1][1])
 
-        # Final latent projection
+        # Final Encoder latent projection
         self.distribution_conv = nn.Conv1d(
             in_channels=base_channels * c_mults[-1][1],
             out_channels=2 * latent_dim, # 64 channels for mu and 64 for var
@@ -99,8 +50,8 @@ class VAE(nn.Module):
             padding=1
         )
 
-        # ----------------------
-        # DECODER PROPERTIES
+        # -------------------------------------------------------
+        # -----------------  DECODER PROPERTIES ----------------- 
         # projection layer to upscale from the latent channels (64, 43) -> (2048, 43) 
         self.decoder_projection = nn.Conv1d(
             in_channels=latent_dim,
@@ -132,6 +83,7 @@ class VAE(nn.Module):
 
 
     def encode(self, x):
+        self.encoder_shapes = []  # Clear previous shapes
         x = self.encoder_init(x) # 2 -> 128 channels
 
         for block in self.encoder_blocks:
@@ -140,7 +92,9 @@ class VAE(nn.Module):
             # Block 2: (256, 11025) -> (512, 2756)
             # Block 3: (512, 2756)  -> (1024, 344)
             # Block 4: (1024, 344)  -> (2048, 43)
+            self.encoder_shapes.append(x.shape)
             x = block(x)
+            print(block.stride, x.shape)
 
         x = self.encoder_final_activation(x)
 
@@ -164,14 +118,23 @@ class VAE(nn.Module):
     def decode(self, z):
         z = self.decoder_projection(z) # (64, 43) -> (2048, 43)
 
-        for block in self.decoder_blocks:
+        for i, block in enumerate(self.decoder_blocks):
             # Block 0: (2048, 43) -> (1024, 344)
             # Block 1: (1024, 344) -> (512, 2756)
             # Block 2: (512, 2756) -> (256, 11025)
             # Block 3: (256, 11025)  -> (128, 44100)
             # Block 4: (128, 44100)  -> (128, 88200)
             z = block(z)
-            print(z.shape)
+            target_length = self.encoder_shapes[-(i+1)][-1]
+            current_length = z.shape[-1]
+            if current_length < target_length:
+                # Pad with zeros
+                padding_needed = target_length - current_length
+                z = torch.nn.functional.pad(z, (0, padding_needed))
+            elif current_length > target_length:
+                # Crop
+                z = z[..., :target_length]
+            print(block.stride, z.shape)
 
         z = self.decoder_final_activation(z)
 
@@ -182,6 +145,7 @@ class VAE(nn.Module):
     def forward(self, x):
         mu, logvar = self.encode(x)
         z = self.reparameterization(mu, logvar)
+        print("----------------------")
         x_recon = self.decode(z)
         return mu, logvar, z, x_recon
 

@@ -152,7 +152,7 @@ class VAE(nn.Module):
 
 if __name__ == "__main__":
     vae = VAE()
-    audio = torch.randn(1, 2, 88200)
+    audio = torch.randn(1, 2, 90112)
     mu, logvar, z, x_recon = vae(audio)
     print(f"mu shape: {mu.shape}")  # Should be [1, 64, 43]
     print(f"logvar shape: {logvar.shape}")  # Should be [1, 64, 43]

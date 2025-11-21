@@ -17,7 +17,6 @@ class VAE(nn.Module):
         super().__init__()
         
         self.in_channels = in_channels
-        self.encoder_shapes = []
         
         # ----------------- ENCODER PROPERTIES ----------------- 
         # First layer: stereo audio (2 channels) -> 128 feature channels
@@ -83,26 +82,25 @@ class VAE(nn.Module):
 
 
     def encode(self, x):
-        self.encoder_shapes = []  # Clear previous shapes
+        shapes = []  # Clear previous shapes
         x = self.encoder_init(x) # 2 -> 128 channels
 
         for block in self.encoder_blocks:
-            # Block 0: (128, 88200) -> (128, 44100)
-            # Block 1: (128, 44100) -> (256, 11025)
-            # Block 2: (256, 11025) -> (512, 2756)
-            # Block 3: (512, 2756)  -> (1024, 344)
-            # Block 4: (1024, 344)  -> (2048, 43)
-            self.encoder_shapes.append(x.shape)
+            # Block 0: (128, 90112) -> (128, 45056)
+            # Block 1: (128, 45056) -> (256, 11264)
+            # Block 2: (256, 11264) -> (512, 2816)
+            # Block 3: (512, 2816)  -> (1024, 352)
+            # Block 4: (1024, 352)  -> (2048, 44)
+            shapes.append(x.shape)
             x = block(x)
-            print(block.stride, x.shape)
 
         x = self.encoder_final_activation(x)
 
-        x = self.distribution_conv(x) # (2048, 43) -> (128, 43)
+        x = self.distribution_conv(x) # (2048, 44) -> (128, 44)
         
-        mu, logvar = torch.chunk(x, 2, dim=1) # Each of shape (64, 43)
+        mu, logvar = torch.chunk(x, 2, dim=1) # Each of shape (64, 44)
 
-        return mu, logvar
+        return mu, logvar, shapes
 
     def reparameterization(self, mu, logvar):
         """Sample z from the distributrion using the reparameterization trick
@@ -112,20 +110,20 @@ class VAE(nn.Module):
             logvar (Tensor): the variance stored in logspace
         """
         eps = torch.randn_like(mu)
-        z = mu + eps * torch.sqrt(torch.exp(logvar))
+        z = mu + eps * torch.exp(0.5 * logvar)
         return z
     
-    def decode(self, z):
-        z = self.decoder_projection(z) # (64, 43) -> (2048, 43)
+    def decode(self, z, encoder_shapes):
+        z = self.decoder_projection(z) # (64, 44) -> (2048, 44)
 
         for i, block in enumerate(self.decoder_blocks):
-            # Block 0: (2048, 43) -> (1024, 344)
-            # Block 1: (1024, 344) -> (512, 2756)
-            # Block 2: (512, 2756) -> (256, 11025)
-            # Block 3: (256, 11025)  -> (128, 44100)
-            # Block 4: (128, 44100)  -> (128, 88200)
+            # Block 0: (2048, 44) -> (1024, 352)
+            # Block 1: (1024, 352) -> (512, 2816)
+            # Block 2: (512, 2816) -> (256, 11264)
+            # Block 3: (256, 11264)  -> (128, 45056)
+            # Block 4: (128, 45056)  -> (128, 90112)
             z = block(z)
-            target_length = self.encoder_shapes[-(i+1)][-1]
+            target_length = encoder_shapes[-(i+1)][-1]
             current_length = z.shape[-1]
             if current_length < target_length:
                 # Pad with zeros
@@ -134,19 +132,17 @@ class VAE(nn.Module):
             elif current_length > target_length:
                 # Crop
                 z = z[..., :target_length]
-            print(block.stride, z.shape)
 
         z = self.decoder_final_activation(z)
 
-        x_recon = self.decoder_final_projection(z) # (128, 88200) -> (2, 88200)
+        x_recon = self.decoder_final_projection(z) # (128, 90112) -> (2, 90112)
 
         return x_recon
 
     def forward(self, x):
-        mu, logvar = self.encode(x)
+        mu, logvar, encoder_shapes = self.encode(x)
         z = self.reparameterization(mu, logvar)
-        print("----------------------")
-        x_recon = self.decode(z)
+        x_recon = self.decode(z, encoder_shapes)
         return mu, logvar, z, x_recon
 
 
@@ -154,7 +150,7 @@ if __name__ == "__main__":
     vae = VAE()
     audio = torch.randn(1, 2, 90112)
     mu, logvar, z, x_recon = vae(audio)
-    print(f"mu shape: {mu.shape}")  # Should be [1, 64, 43]
-    print(f"logvar shape: {logvar.shape}")  # Should be [1, 64, 43]
-    print(f"z shape: {z.shape}")  # Should be [1, 64, 43]
-    print(f"x_recon shape: {x_recon.shape}")  # Should be [1, 2, 88200]
+    print(f"mu shape: {mu.shape}")  # Should be [1, 64, 44]
+    print(f"logvar shape: {logvar.shape}")  # Should be [1, 64, 44]
+    print(f"z shape: {z.shape}")  # Should be [1, 64, 44]
+    print(f"x_recon shape: {x_recon.shape}")  # Should be [1, 2, 90112]

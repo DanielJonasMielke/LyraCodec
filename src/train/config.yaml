@@ -10,21 +10,24 @@ model:
 training:
   batch_size: 4
   num_epochs: 500
-  learning_rate: 2.0e-4
+  learning_rate: 1.0e-4  # Reduced from 2e-4 for stability
   weight_decay: 1.0e-4
 
   # Loss weights
-  kl_weight: 1.0e-6 # Start small, will anneal
-  kl_anneal_epochs: 2 # Gradually increase KL weight over these epochs
+  kl_weight: 1.0e-4  # Increased from 1e-6 for better balance
+  kl_anneal_epochs: 50  # Increased from 2 for gradual annealing
+
+  # Reconstruction loss scaling (to balance with KL)
+  recon_loss_scale: 1.0  # Can adjust if needed
 
   # Optimizer
   adam_betas: [0.9, 0.999]
-  gradient_clip: 1.0
+  gradient_clip: 5.0  # Increased from 1.0 for less restrictive clipping
 
 # Data configuration
 data:
   train_dir: "./data/vocal_dataset"
-  target_length: 40960
+  target_length: 88200  # 2 seconds at 44.1kHz (matches model design)
   target_sr: 44100
   train_split: 0.9 # 90% train, 10% validation
   num_workers: 2

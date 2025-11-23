@@ -44,7 +44,23 @@ class VAETrainer:
             betas=self.config['training']['adam_betas'],
             weight_decay=self.config['training']['weight_decay']
         )
-        
+
+        # Setup learning rate scheduler (cosine annealing with warmup)
+        warmup_epochs = 5
+        total_epochs = self.config['training']['num_epochs']
+
+        # Simple warmup + cosine decay scheduler
+        def lr_lambda(epoch):
+            if epoch < warmup_epochs:
+                # Linear warmup
+                return (epoch + 1) / warmup_epochs
+            else:
+                # Cosine annealing after warmup
+                progress = (epoch - warmup_epochs) / (total_epochs - warmup_epochs)
+                return 0.5 * (1 + torch.cos(torch.tensor(progress * 3.14159)).item())
+
+        self.scheduler = optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda)
+
         # Setup mixed precision
         self.use_amp = self.config['system']['mixed_precision']
         self.scaler = torch.cuda.amp.GradScaler() if self.use_amp else None
@@ -99,24 +115,33 @@ class VAETrainer:
     def compute_loss(self, x, mu, logvar, x_recon, epoch):
         """
         Compute VAE loss = Reconstruction Loss + KL Divergence
+
+        Uses improved KL annealing schedule and optional reconstruction loss scaling
         """
         # Reconstruction loss (MSE)
         recon_loss = nn.functional.mse_loss(x_recon, x, reduction='mean')
-        
+
+        # Apply reconstruction loss scaling if specified
+        recon_scale = self.config['training'].get('recon_loss_scale', 1.0)
+        scaled_recon_loss = recon_loss * recon_scale
+
         # KL divergence loss
         # KL(N(mu, sigma) || N(0, 1)) = -0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
         kl_loss = -0.5 * torch.mean(1 + logvar - mu.pow(2) - logvar.exp())
-        
-        # KL annealing: gradually increase KL weight
+
+        # Improved KL annealing: use smoother warmup schedule
         kl_anneal_epochs = self.config['training']['kl_anneal_epochs']
         if epoch < kl_anneal_epochs:
-            kl_weight = self.config['training']['kl_weight'] * (epoch / kl_anneal_epochs)
+            # Sigmoid-like warmup for smoother transition
+            progress = epoch / kl_anneal_epochs
+            # Simple linear warmup (can be changed to sigmoid if needed)
+            kl_weight = self.config['training']['kl_weight'] * progress
         else:
             kl_weight = self.config['training']['kl_weight']
-        
+
         # Total loss
-        total_loss = recon_loss + kl_weight * kl_loss
-        
+        total_loss = scaled_recon_loss + kl_weight * kl_loss
+
         return total_loss, recon_loss, kl_loss, kl_weight
     
     def train_epoch(self, epoch):
@@ -131,34 +156,29 @@ class VAETrainer:
         
         for batch_idx, x in enumerate(pbar):
             x = x.to(self.device)
-            
+
             # Forward pass with mixed precision
             with torch.cuda.amp.autocast(enabled=self.use_amp):
                 mu, logvar, z, x_recon = self.model(x)
-                # print the max and min of mu and logvar
-                print(f"mu range: [{mu.min():.2f}, {mu.max():.2f}]")
-                print(f"logvar range: [{logvar.min():.2f}, {logvar.max():.2f}]")
-                # print the max and min of x_recon
-                print(f"x_recon range: [{x_recon.min():.2f}, {x_recon.max():.2f}]")
                 loss, recon_loss, kl_loss, kl_weight = self.compute_loss(
                     x, mu, logvar, x_recon, epoch
                 )
-            
+
             # Backward pass
             self.optimizer.zero_grad()
-            
+
             if self.use_amp:
                 self.scaler.scale(loss).backward()
                 self.scaler.unscale_(self.optimizer)
-                torch.nn.utils.clip_grad_norm_(
-                    self.model.parameters(), 
+                grad_norm = torch.nn.utils.clip_grad_norm_(
+                    self.model.parameters(),
                     self.config['training']['gradient_clip']
                 )
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
             else:
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(
+                grad_norm = torch.nn.utils.clip_grad_norm_(
                     self.model.parameters(),
                     self.config['training']['gradient_clip']
                 )
@@ -183,6 +203,11 @@ class VAETrainer:
                     'train/recon_loss': recon_loss.item(),
                     'train/kl_loss': kl_loss.item(),
                     'train/kl_weight': kl_weight,
+                    'train/grad_norm': grad_norm.item(),
+                    'train/mu_mean': mu.mean().item(),
+                    'train/mu_std': mu.std().item(),
+                    'train/logvar_mean': logvar.mean().item(),
+                    'train/logvar_std': logvar.std().item(),
                     'train/epoch': epoch,
                     'train/step': self.global_step
                 })
@@ -290,10 +315,11 @@ class VAETrainer:
             'global_step': self.global_step,
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
+            'scheduler_state_dict': self.scheduler.state_dict(),
             'val_loss': val_loss,
             'config': self.config
         }
-        
+
         if self.scaler is not None:
             checkpoint['scaler_state_dict'] = self.scaler.state_dict()
         
@@ -327,12 +353,16 @@ class VAETrainer:
         
         self.model.load_state_dict(checkpoint['model_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+
+        if 'scheduler_state_dict' in checkpoint:
+            self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+
         self.current_epoch = checkpoint['epoch']
         self.global_step = checkpoint['global_step']
-        
+
         if self.scaler is not None and 'scaler_state_dict' in checkpoint:
             self.scaler.load_state_dict(checkpoint['scaler_state_dict'])
-        
+
         print(f"Resumed from epoch {self.current_epoch}, step {self.global_step}")
     
     def train(self, resume_from=None):
@@ -361,16 +391,24 @@ class VAETrainer:
             # Validate
             val_loss = self.validate(epoch)
             print(f"  Val Loss: {val_loss:.4f}")
-            
+
+            # Step the learning rate scheduler
+            self.scheduler.step()
+            current_lr = self.optimizer.param_groups[0]['lr']
+            print(f"  Learning Rate: {current_lr:.6f}")
+
+            # Log learning rate to wandb
+            wandb.log({'train/learning_rate': current_lr, 'train/epoch': epoch})
+
             # Save checkpoint
             is_best = val_loss < self.best_val_loss
             if is_best:
                 self.best_val_loss = val_loss
                 print(f"  New best validation loss!")
-            
+
             if (epoch + 1) % self.config['checkpointing']['save_every_n_epochs'] == 0:
                 self.save_checkpoint(epoch + 1, val_loss, is_best)
-            
+
             self.current_epoch = epoch + 1
         
         print("\nTraining complete!")

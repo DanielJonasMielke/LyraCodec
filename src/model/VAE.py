@@ -80,6 +80,9 @@ class VAE(nn.Module):
             padding=3
             )
 
+        # Initialize weights for stable training
+        self._initialize_weights()
+
     def encode(self, x):
         shapes = []  # Clear previous shapes
         x = self.encoder_init(x) # 2 -> 128 channels
@@ -96,10 +99,12 @@ class VAE(nn.Module):
         x = self.encoder_final_activation(x)
 
         x = self.distribution_conv(x) # (2048, 44) -> (128, 44)
-        
+
         mu, logvar = torch.chunk(x, 2, dim=1) # Each of shape (64, 44)
 
-        logvar = torch.clamp(logvar, min=-10.0, max=10.0) # Prevent extreme variances
+        # Clamp logvar to prevent numerical instability (relaxed range)
+        # With proper training hyperparameters, this should rarely activate
+        logvar = torch.clamp(logvar, min=-20.0, max=10.0)
 
         return mu, logvar, shapes
 
@@ -139,6 +144,25 @@ class VAE(nn.Module):
         x_recon = self.decoder_final_projection(z) # (128, 90112) -> (2, 90112)
 
         return x_recon
+
+    def _initialize_weights(self):
+        """Initialize weights for stable training"""
+        for m in self.modules():
+            if isinstance(m, (nn.Conv1d, nn.ConvTranspose1d)):
+                # Use He initialization for Conv layers (good for ReLU-like activations)
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='linear')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.xavier_normal_(m.weight)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+
+        # Initialize distribution projection with smaller weights
+        # This helps prevent extreme initial mu/logvar values
+        nn.init.xavier_normal_(self.distribution_conv.weight, gain=0.01)
+        if self.distribution_conv.bias is not None:
+            nn.init.constant_(self.distribution_conv.bias, 0)
 
     def forward(self, x):
         mu, logvar, encoder_shapes = self.encode(x)

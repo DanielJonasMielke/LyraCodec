@@ -24,7 +24,7 @@ class VAE(nn.Module):
             in_channels=in_channels,
             out_channels=base_channels,
             kernel_size=7,
-            padding=3 
+            padding=3 # Formula: (kernel_size - 1) // 2 
         )
         
         encoder_blocks = []
@@ -80,7 +80,6 @@ class VAE(nn.Module):
             padding=3
             )
 
-
     def encode(self, x):
         shapes = []  # Clear previous shapes
         x = self.encoder_init(x) # 2 -> 128 channels
@@ -99,6 +98,8 @@ class VAE(nn.Module):
         x = self.distribution_conv(x) # (2048, 44) -> (128, 44)
         
         mu, logvar = torch.chunk(x, 2, dim=1) # Each of shape (64, 44)
+
+        logvar = torch.clamp(logvar, min=-10.0, max=10.0) # Prevent extreme variances
 
         return mu, logvar, shapes
 
@@ -145,12 +146,3 @@ class VAE(nn.Module):
         x_recon = self.decode(z, encoder_shapes)
         return mu, logvar, z, x_recon
 
-
-if __name__ == "__main__":
-    vae = VAE()
-    audio = torch.randn(1, 2, 90112)
-    mu, logvar, z, x_recon = vae(audio)
-    print(f"mu shape: {mu.shape}")  # Should be [1, 64, 44]
-    print(f"logvar shape: {logvar.shape}")  # Should be [1, 64, 44]
-    print(f"z shape: {z.shape}")  # Should be [1, 64, 44]
-    print(f"x_recon shape: {x_recon.shape}")  # Should be [1, 2, 90112]

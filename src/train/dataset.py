@@ -44,11 +44,45 @@ class VocalDataset(Dataset):
             rand_start = 0
         
         wav_snippet = waveform[:, rand_start:rand_start + self.target_length]
-        
+        # Check energy and normalize
+        if not self.check_audio_energy(wav_snippet, threshold_db=-40):
+            # If silent, resample until non-silent
+            while not self.check_audio_energy(wav_snippet, threshold_db=-40):
+                print(f"[SILENT SAMPLE] Resampling index {idx}")
+                rand_start = torch.randint(0, max_start + 1, (1,)).item()
+                wav_snippet = waveform[:, rand_start:rand_start + self.target_length]
+        wav_snippet = self.normalize_audio(wav_snippet)
         return wav_snippet
     
+    def check_audio_energy(self, waveform, threshold_db=-40):
+        """Return True if audio has sufficient energy"""
+        rms = torch.sqrt(torch.mean(waveform ** 2))
+        rms_db = 20 * torch.log10(rms + 1e-8)
+        return rms_db > threshold_db
+    
+    def normalize_audio(self, waveform, target_peak=0.95):
+        """Peak normalize audio to target_peak level"""
+        # Find the maximum absolute value across all channels
+        max_val = waveform.abs().max()
+        
+        # Avoid division by zero
+        if max_val > 0:
+            waveform = waveform * (target_peak / max_val)
+        
+        return waveform
+    
+
+    
 if __name__ == "__main__":
-    dataset = VocalDataset("./data/vocal_dataset")
-    print(f"Dataset size: {len(dataset)}")
-    sample = dataset[0]
-    print(f"Sample shape: {sample.shape}")
+    import matplotlib.pyplot as plt
+    dataset = VocalDataset(data_dir="./data/vocal_dataset")
+    sample = dataset[50] # 50 silent sample
+    print(f"Sample shape: {sample.shape}")  # Should be (2, target
+    print(sample)
+    # Plot waveform
+    plt.figure(figsize=(10, 4))
+    plt.plot(sample.t().numpy())
+    plt.title("Waveform")
+    plt.xlabel("Sample Index")
+    plt.ylabel("Amplitude")
+    plt.show()

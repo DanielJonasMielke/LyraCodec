@@ -79,9 +79,19 @@ class VAE(nn.Module):
             kernel_size=7,
             padding=3
             )
+        
+        # initialize weights
+        self.apply(self._init_weights)
 
-        # Initialize weights for stable training
-        self._initialize_weights()
+    def _init_weights(self, m):
+        if isinstance(m, (nn.Conv1d, nn.ConvTranspose1d)):
+            nn.init.kaiming_normal_(m.weight, nonlinearity='relu')
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+        elif isinstance(m, nn.Linear):
+            nn.init.kaiming_normal_(m.weight)
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
 
     def encode(self, x):
         shapes = []  # Clear previous shapes
@@ -99,12 +109,10 @@ class VAE(nn.Module):
         x = self.encoder_final_activation(x)
 
         x = self.distribution_conv(x) # (2048, 44) -> (128, 44)
-
+        
         mu, logvar = torch.chunk(x, 2, dim=1) # Each of shape (64, 44)
 
-        # Clamp logvar to prevent numerical instability (relaxed range)
-        # With proper training hyperparameters, this should rarely activate
-        logvar = torch.clamp(logvar, min=-20.0, max=10.0)
+        logvar = torch.clamp(logvar, min=-10.0, max=10.0) # Prevent extreme variances
 
         return mu, logvar, shapes
 
@@ -145,28 +153,19 @@ class VAE(nn.Module):
 
         return x_recon
 
-    def _initialize_weights(self):
-        """Initialize weights for stable training"""
-        for m in self.modules():
-            if isinstance(m, (nn.Conv1d, nn.ConvTranspose1d)):
-                # Use He initialization for Conv layers (good for ReLU-like activations)
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='linear')
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.Linear):
-                nn.init.xavier_normal_(m.weight)
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-
-        # Initialize distribution projection with smaller weights
-        # This helps prevent extreme initial mu/logvar values
-        nn.init.xavier_normal_(self.distribution_conv.weight, gain=0.01)
-        if self.distribution_conv.bias is not None:
-            nn.init.constant_(self.distribution_conv.bias, 0)
-
     def forward(self, x):
         mu, logvar, encoder_shapes = self.encode(x)
         z = self.reparameterization(mu, logvar)
         x_recon = self.decode(z, encoder_shapes)
         return mu, logvar, z, x_recon
-
+    
+if __name__ == '__main__':
+    # test forward pass shapes
+    model = VAE()
+    x = torch.randn(2, 2, 90112)  # batch_size=2, in_channels=2, length=90112
+    mu, logvar, z, x_recon = model(x)
+    print("Input shape:", x.shape)
+    print("Mu shape:", mu.shape)
+    print("Logvar shape:", logvar.shape)
+    print("Latent z shape:", z.shape)
+    print("Reconstructed x shape:", x_recon.shape)

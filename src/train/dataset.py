@@ -43,12 +43,11 @@ class VocalDataset(Dataset):
         else:
             rand_start = 0
         
-        wav_snippet = waveform[:, rand_start:rand_start + self.target_length]
+        wav_snippet = waveform[:, rand_start: rand_start + self.target_length]
         # Check energy and normalize
         if not self.check_audio_energy(wav_snippet, threshold_db=-40):
             # If silent, resample until non-silent
             while not self.check_audio_energy(wav_snippet, threshold_db=-40):
-                print(f"[SILENT SAMPLE] Resampling index {idx}")
                 rand_start = torch.randint(0, max_start + 1, (1,)).item()
                 wav_snippet = waveform[:, rand_start:rand_start + self.target_length]
         wav_snippet = self.normalize_audio(wav_snippet)

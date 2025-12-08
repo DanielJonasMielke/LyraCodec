@@ -153,7 +153,7 @@ class VAE(nn.Module):
 
         return x_recon
 
-    def forward(self, x):
+    def forward(self, x) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         mu, logvar, encoder_shapes = self.encode(x)
         z = self.reparameterization(mu, logvar)
         x_recon = self.decode(z, encoder_shapes)

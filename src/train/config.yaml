@@ -1,0 +1,28 @@
+hyperparameters:
+  training:
+    learning_rate: 0.0001 # 1e-4
+    batch_size: 2
+    num_epochs: 50
+    weight_decay: 0.0001
+    lr_scheduler_step_size: 10
+    lr_scheduler_gamma: 0.5
+    betas: [0.8, 0.99]
+    stft_loss_params:
+      fft_sizes: [2048, 1024, 512, 256, 128, 64, 32]
+      hop_sizes: [512, 256, 128, 64, 32, 16, 8]
+      win_lengths: [2048, 1024, 512, 256, 128, 64, 32]
+      perceptual_weighting: true
+  data:
+    path: data/vocal_dataset/
+    sample_rate: 44100
+    target_length: 90112
+    num_workers: 4
+  model:
+    in_channels: 2
+    base_channels: 128
+    latent_dim: 64
+    c_mults: [[1, 1], [1, 2], [2, 4], [4, 8], [8, 16]]
+    strides: [2, 4, 4, 8, 8]
+
+device:
+  use_cuda: true

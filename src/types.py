@@ -14,6 +14,7 @@ class TrainingConfig(TypedDict):
     weight_decay: float
     lr_scheduler_step_size: int
     lr_scheduler_gamma: float
+    loss_log_interval: int
     betas: list[float]
     stft_loss_params: StftLossConfig
 

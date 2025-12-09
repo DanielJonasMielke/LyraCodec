@@ -128,6 +128,15 @@ def init_optimizer(model, config: Config):
     print(f"Optimizer initialized: Adam with learning rate {training_params['learning_rate']}")
     return optimizer
 
+def compute_loss(x_recon, x_original, mu, logvar, stft_loss_fn):
+    """
+    STFT reconstruction loss + KL divergence
+    """
+    recon_loss = stft_loss_fn(x_recon, x_original)
+    kl_loss = -0.5 * torch.mean(1 + logvar - mu.pow(2) - logvar.exp())
+    total_loss = recon_loss + 1e-4 * kl_loss
+    return recon_loss, kl_loss, total_loss
+
 def train(model: torch.nn, 
           dataloader: DataLoader, 
           optimizer: torch.optim.Adam, 
@@ -147,8 +156,16 @@ def train(model: torch.nn,
             print(f"Processing batch {batch_idx+1}/{len(dataloader)}", end='\r')
             # Move batch to device
             audio_batch = batch.to(device)
-
-            mu, logvar, z, x_recon = model(batch)
+            # forward pass
+            mu, logvar, z, x_recon = model(audio_batch)
+            # compute loss
+            recon_loss, kl_loss, total_loss = compute_loss(
+                x_recon, audio_batch, mu, logvar, loss_fn
+            )
+            # backward pass and optimization
+            optimizer.zero_grad()
+            total_loss.backward()
+            optimizer.step()
 
 
 

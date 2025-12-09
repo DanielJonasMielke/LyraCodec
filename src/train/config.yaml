@@ -8,6 +8,8 @@ hyperparameters:
     lr_scheduler_gamma: 0.5
     betas: [0.8, 0.99]
     loss_log_interval: 10 # in training steps
+    generate_sample_interval: 100 # in training steps
+    checkpoint_interval: 200 # in training steps
     stft_loss_params:
       fft_sizes: [2048, 1024, 512, 256, 128, 64, 32]
       hop_sizes: [512, 256, 128, 64, 32, 16, 8]

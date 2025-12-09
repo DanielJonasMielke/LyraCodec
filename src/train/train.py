@@ -147,6 +147,8 @@ def train(model: torch.nn,
 
     train_conf = config['hyperparameters']['training']
 
+    global_step = 0
+
     for num_epoch in range(train_conf['num_epochs']):
         print("=" * 50)
         print(f"Starting epoch number: {num_epoch}")
@@ -166,6 +168,20 @@ def train(model: torch.nn,
             optimizer.zero_grad()
             total_loss.backward()
             optimizer.step()
+
+            # Logging
+            if global_step % train_conf['loss_log_interval'] == 0:
+                pass
+
+            # Generate sample audio at intervals
+            if global_step % train_conf['generate_sample_interval'] == 0:
+                pass
+
+            # Save model checkpoint at intervals
+            if global_step % train_conf['checkpoint_interval'] == 0:
+                pass
+
+            global_step += 1
 
 
 

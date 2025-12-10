@@ -1,18 +1,20 @@
 hyperparameters:
   training:
-    learning_rate: 0.00015 # 1.5e-4
+    learning_rate: 0.000015 # 1.5e-5
     lr_scheduler:
       warmup_steps: 500
       inv_gamma: 200000
       power: 0.5
-    batch_size: 2
+    batch_size: 4
     num_epochs: 50
     weight_decay: 0.0001
     kl_weight: 0.0001 # 1e-4
+    kl_warmup_steps: 800
     betas: [0.8, 0.99]
-    loss_log_interval: 4 # in training steps
-    generate_sample_interval: 100 # in training steps
-    checkpoint_interval: 200 # in training steps
+    validate_and_save_every: 1 # in epochs
+    log_interval: 4 # in training steps
+    generate_sample_interval: 200 # in training steps
+    checkpoint_interval: 500 # in training steps
     stft_loss_params:
       fft_sizes: [2048, 1024, 512, 256, 128, 64, 32]
       hop_sizes: [512, 256, 128, 64, 32, 16, 8]

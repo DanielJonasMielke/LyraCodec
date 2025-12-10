@@ -19,7 +19,9 @@ class TrainingConfig(TypedDict):
     num_epochs: int
     weight_decay: float
     kl_weight: float
-    loss_log_interval: int
+    kl_warmup_steps: int
+    log_interval: int
+    validate_and_save_every: int
     generate_sample_interval: int
     checkpoint_interval: int
     betas: list[float]

@@ -3,7 +3,7 @@ import yaml
 from pathlib import Path
 
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, random_split
 import auraloss
 
 from src.train.dataset import VocalDataset
@@ -62,22 +62,39 @@ def init_dataloader(config: Config) -> DataLoader:
         DataLoader: Initialized DataLoader for the dataset.
     """
     dataset_params = config['hyperparameters']['data']
-    dataset = VocalDataset(
+    full_dataset = VocalDataset(
         data_dir=dataset_params['path'],
         target_sr=dataset_params['sample_rate'],
         target_length=dataset_params['target_length']
     )
 
-    dataloader = DataLoader(
-        dataset,
+    # Split into 90% train, 10% validation
+    train_size = int(0.9 * len(full_dataset))
+    val_size = len(full_dataset) - train_size
+
+    train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size])
+
+    train_dataloader = DataLoader(
+        train_dataset,
         batch_size=config['hyperparameters']['training']['batch_size'],
         shuffle=True,
         num_workers=dataset_params['num_workers']
     )
 
-    print(f"Dataset loaded with {len(dataset)} samples.")
-    print(f"Steps per epoch: {len(dataloader)}")
-    return dataloader
+    val_dataloader = DataLoader(
+        val_dataset,
+        batch_size=config['hyperparameters']['training']['batch_size'],
+        shuffle=False,
+        num_workers=dataset_params['num_workers']
+    )
+
+    print(f"Total dataset size: {len(full_dataset)} samples")
+    print(f"Train dataset: {len(train_dataset)} samples")
+    print(f"Validation dataset: {len(val_dataset)} samples")
+    print(f"Train steps per epoch: {len(train_dataloader)}")
+    print(f"Val steps per epoch: {len(val_dataloader)}")
+
+    return train_dataloader, val_dataloader
 
 def init_model(config: Config, device: str):
     """Initialize the VAE model based on configuration.
@@ -152,11 +169,13 @@ def init_scheduler(optimizer, config: Config):
     print(f"Scheduler initialized: InverseLR with warmup={scheduler_params['warmup_steps']}")
     return scheduler
 
-def compute_loss(x_recon, x_original, mu, logvar, stft_loss_fn, config: Config):
+def compute_loss(x_recon, x_original, mu, logvar, stft_loss_fn, config: Config, global_step: int):
     """
     STFT reconstruction loss + KL divergence
     """
     kl_weight = config['hyperparameters']['training']['kl_weight']
+    kl_warmup_steps = config['hyperparameters']['training']['kl_warmup_steps']
+    kl_weight = kl_weight * min(1.0, global_step / kl_warmup_steps)
 
     recon_loss = stft_loss_fn(x_recon, x_original)
     kl_loss = -0.5 * torch.mean(1 + logvar - mu.pow(2) - logvar.exp())
@@ -175,8 +194,103 @@ def init_wandb(config: Config):
     )
     print("Weights & Biases logging initialized.")
 
+def compute_grad_norms(model: torch.nn.Module):
+    """Compute gradient norms for VAE components."""
+    
+    def module_grad_norm(module: torch.nn.Module) -> float:
+        """Compute L2 norm of all gradients in a module."""
+        total = 0.0
+        for param in module.parameters():
+            if param.grad is not None:
+                total += param.grad.norm().item() ** 2
+        return total ** 0.5
+    
+    norms = {}
+    
+    # Encoder components
+    norms["encoder_init"] = module_grad_norm(model.encoder_init)
+
+    encoder_blocks_total = 0.0
+    for block in model.encoder_blocks:
+        encoder_blocks_total += module_grad_norm(block) ** 2
+    norms["encoder_blocks"] = encoder_blocks_total ** 0.5
+    
+    norms["encoder_final_activation"] = module_grad_norm(model.encoder_final_activation)
+    norms["distribution_conv"] = module_grad_norm(model.distribution_conv)
+
+    # Decoder components
+    norms["decoder_projection"] = module_grad_norm(model.decoder_projection)
+
+    decoder_blocks_total = 0.0
+    for block in model.decoder_blocks:
+        decoder_blocks_total += module_grad_norm(block) ** 2
+    norms["decoder_blocks"] = decoder_blocks_total ** 0.5
+
+    norms["decoder_final_activation"] = module_grad_norm(model.decoder_final_activation)
+    norms["decoder_final_projection"] = module_grad_norm(model.decoder_final_projection)
+
+    # Snake activations
+    snake_total = 0.0
+    for module in model.modules():
+        if module.__class__.__name__ == "SnakeActivation":
+            snake_total += module_grad_norm(module) ** 2
+    norms["snake_activations"] = snake_total ** 0.5
+    
+    return norms
+
+def validate(model: torch.nn.Module,
+             val_dataloader: DataLoader,
+             loss_fn: auraloss.freq.MultiResolutionSTFTLoss,
+             config: Config,
+             device: str,
+             global_step: int):
+    """
+    Run validation and return average losses.
+    """
+    model.eval()  # Set to evaluation mode
+    
+    total_recon_loss = 0.0
+    total_kl_loss = 0.0
+    total_accumulated_loss = 0.0
+    num_batches = 0
+    
+    print("\nRunning validation...")
+    
+    with torch.no_grad():  # No gradient computation
+        for batch_idx, batch in enumerate(val_dataloader):
+            print(f"Validation batch {batch_idx+1}/{len(val_dataloader)}", end='\r')
+            
+            audio_batch = batch.to(device)
+            
+            # Forward pass
+            mu, logvar, _z, x_recon = model(audio_batch)
+            
+            # Compute losses
+            recon_loss, kl_loss, total_loss = compute_loss(
+                x_recon, audio_batch, mu, logvar, loss_fn, config, global_step
+            )
+            
+            # Accumulate losses
+            total_recon_loss += recon_loss.item()
+            total_kl_loss += kl_loss.item()
+            total_accumulated_loss += total_loss.item()
+            num_batches += 1
+    
+    # Compute averages
+    avg_recon_loss = total_recon_loss / num_batches
+    avg_kl_loss = total_kl_loss / num_batches
+    avg_total_loss = total_loss / num_batches
+    
+    print(f"\nValidation complete: avg_loss={avg_total_loss:.4f}, avg_recon={avg_recon_loss:.4f}, avg_kl={avg_kl_loss:.4f}")
+    
+    model.train()
+    
+    return avg_total_loss, avg_recon_loss, avg_kl_loss
+
+
 def train(model: torch.nn.Module, 
-          dataloader: DataLoader, 
+          train_dataloader: DataLoader, 
+          val_dataloader: DataLoader,
           optimizer: torch.optim.Adam, 
           scheduler: torch.optim.lr_scheduler.LambdaLR,
           loss_fn: auraloss.freq.MultiResolutionSTFTLoss,
@@ -193,46 +307,125 @@ def train(model: torch.nn.Module,
         print(f"Starting epoch number: {num_epoch}")
         model.train()
     
-        for batch_idx, batch in enumerate(dataloader):
-            print(f"Processing batch {batch_idx+1}/{len(dataloader)}", end='\r')
+        for batch_idx, batch in enumerate(train_dataloader):
+            print(f"Processing batch {batch_idx+1}/{len(train_dataloader)}", end='\r')
             # Move batch to device
             audio_batch = batch.to(device)
             # forward pass
             mu, logvar, _z, x_recon = model(audio_batch)
             # compute loss
             recon_loss, kl_loss, total_loss = compute_loss(
-                x_recon, audio_batch, mu, logvar, loss_fn, config
+                x_recon, audio_batch, mu, logvar, loss_fn, config, global_step
             )
+
             # backward pass and optimization
             optimizer.zero_grad()
             total_loss.backward()
+
+            if torch.isnan(total_loss):
+                print(f"\nNaN loss encountered at epoch {num_epoch}, batch {batch_idx}. Stopping training.")
+                print(f"Losses: recon={recon_loss.item()}, kl={kl_loss.item()}")
+                wandb.log({'train/nan_detected': True}, step=global_step)
+                wandb.finish()
+                return
+
+            # Compute gradient norms after backward and before optimizer step
+            if global_step % train_conf['log_interval'] == 0:
+                grad_norms = compute_grad_norms(model)
+            # Clip gradients if needed
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
             scheduler.step()
 
             # Logging
-            if global_step % train_conf['loss_log_interval'] == 0:
+            if global_step % train_conf['log_interval'] == 0:
                 current_lr = scheduler.get_last_lr()[0]
 
-                wandb.log({
+                log_dict = {
                     'train/total_loss': total_loss.item(),
                     'train/recon_loss': recon_loss.item(),
                     'train/kl_loss': kl_loss.item(),
                     'train/weighted_kl_loss': (train_conf['kl_weight'] * kl_loss).item(),
                     'train/learning_rate': current_lr,
                     'train/epoch': num_epoch,
-                    'train/step': global_step
-                }, step=global_step)
+                    'train/mu_mean': mu.mean().item(),
+                    'train/mu_std': mu.std().item(),
+                    'train/logvar_mean': logvar.mean().item(),
+                }
+
+                # Collect gradient norms
+                for comp, norm in grad_norms.items():
+                    log_dict[f'train/grad_norms/{comp}'] = norm
+                
+                # Batched logging
+                wandb.log(log_dict, step=global_step)
 
 
             # Generate sample audio at intervals
             if global_step % train_conf['generate_sample_interval'] == 0:
-                pass
-
-            # Save model checkpoint at intervals
-            if global_step % train_conf['checkpoint_interval'] == 0:
-                pass
+                # Log original and reconstructed audio samples
+                wandb.log({
+                    'train/audio/original': wandb.Audio(
+                        audio_batch[0].cpu().numpy().T,  # <-- ADD .T to transpose
+                        sample_rate=config['hyperparameters']['data']['sample_rate'],
+                        caption=f'Original Audio - Step {global_step}'
+                    ),
+                    'train/audio/reconstructed': wandb.Audio(
+                        x_recon[0].detach().cpu().numpy().T,  # <-- ADD .T to transpose
+                        sample_rate=config['hyperparameters']['data']['sample_rate'],
+                        caption=f'Reconstructed Audio - Step {global_step}'
+                    )
+                }, step=global_step)
 
             global_step += 1
+
+        # Validation
+        if (num_epoch + 1) % train_conf['validate_and_save_every'] == 0:
+            val_total_loss, val_recon_loss, val_kl_loss = validate(
+                model, val_dataloader, loss_fn, config, device, global_step
+            )
+            wandb.log({
+                'val/total_loss': val_total_loss,
+                'val/recon_loss': val_recon_loss,
+                'val/kl_loss': val_kl_loss,
+                'val/epoch': num_epoch,
+            }, step=global_step)
+
+            # Save model checkpoint after validation
+            checkpoint_path = Path(wandb.run.dir) / f'checkpoint_epoch_{num_epoch+1}_val_loss_{val_total_loss:.4f}.pt'
+
+            torch.save({
+                'epoch': num_epoch + 1,
+                'global_step': global_step,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict(),
+                'val_loss': val_total_loss,
+                'val_recon_loss': val_recon_loss,
+                'val_kl_loss': val_kl_loss,
+                'config': config
+            }, checkpoint_path)
+            
+            print(f"\nCheckpoint saved: {checkpoint_path}")
+
+        print(f"\nEpoch {num_epoch} complete.")
+    
+    print("=" * 50)
+    print("Training complete.")
+
+    # Save final checkpoint
+    final_checkpoint_path = Path(wandb.run.dir) / 'final_checkpoint.pt'
+    torch.save({
+        'epoch': train_conf['num_epochs'],
+        'global_step': global_step,
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'scheduler_state_dict': scheduler.state_dict(),
+        'config': config
+    }, final_checkpoint_path)
+    print(f"Final checkpoint saved: {final_checkpoint_path}")
+    
+    wandb.finish()
 
 
 if __name__ == "__main__":
@@ -248,7 +441,7 @@ if __name__ == "__main__":
     # ============================================
     # INITIALIZE DATASET
     # ============================================
-    dataloader = init_dataloader(config)
+    train_dataloader, val_dataloader = init_dataloader(config)
 
     # ============================================
     # INITIALIZE MODEL
@@ -278,4 +471,16 @@ if __name__ == "__main__":
     # ============================================
     # Training 
     # ============================================
-    train(model, dataloader, optimizer, scheduler, stft_loss, config, device)
+    try:
+        train(model, train_dataloader, val_dataloader, optimizer, scheduler, stft_loss, config, device)
+    except KeyboardInterrupt:
+        print("\n\nTraining interrupted by user (Ctrl+C)")
+    except Exception as e:
+        print(f"\n\nTraining crashed with error: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        # Always runs - clean shutdown
+        print("Closing WandB...")
+        wandb.finish()
+        print("Training script finished.")

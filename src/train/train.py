@@ -201,7 +201,7 @@ def train(model: torch.nn.Module,
             mu, logvar, _z, x_recon = model(audio_batch)
             # compute loss
             recon_loss, kl_loss, total_loss = compute_loss(
-                x_recon, audio_batch, mu, logvar, loss_fn
+                x_recon, audio_batch, mu, logvar, loss_fn, config
             )
             # backward pass and optimization
             optimizer.zero_grad()

@@ -3,14 +3,14 @@ hyperparameters:
     learning_rate: 0.00015 # 1.5e-4
     lr_scheduler:
       warmup_steps: 500
-      inv_gamma: 1.0
+      inv_gamma: 200000
       power: 0.5
     batch_size: 2
     num_epochs: 50
     weight_decay: 0.0001
     kl_weight: 0.0001 # 1e-4
     betas: [0.8, 0.99]
-    loss_log_interval: 10 # in training steps
+    loss_log_interval: 4 # in training steps
     generate_sample_interval: 100 # in training steps
     checkpoint_interval: 200 # in training steps
     stft_loss_params:
@@ -21,7 +21,7 @@ hyperparameters:
   data:
     path: data/vocal_dataset/
     sample_rate: 44100
-    target_length: 90112
+    target_length: 20480
     num_workers: 4
   model:
     in_channels: 2

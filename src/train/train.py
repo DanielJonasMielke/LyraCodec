@@ -169,13 +169,19 @@ def init_scheduler(optimizer, config: Config):
     print(f"Scheduler initialized: InverseLR with warmup={scheduler_params['warmup_steps']}")
     return scheduler
 
+def compute_kl_weight(config: Config, global_step: int) -> float:
+    """
+    Compute the KL weight with warmup.
+    """
+    kl_weight = config['hyperparameters']['training']['kl_weight']
+    kl_warmup_steps = config['hyperparameters']['training']['kl_warmup_steps']
+    return kl_weight * min(1.0, global_step / kl_warmup_steps)
+
 def compute_loss(x_recon, x_original, mu, logvar, stft_loss_fn, config: Config, global_step: int):
     """
     STFT reconstruction loss + KL divergence
     """
-    kl_weight = config['hyperparameters']['training']['kl_weight']
-    kl_warmup_steps = config['hyperparameters']['training']['kl_warmup_steps']
-    kl_weight = kl_weight * min(1.0, global_step / kl_warmup_steps)
+    kl_weight = compute_kl_weight(config, global_step)
 
     recon_loss = stft_loss_fn(x_recon, x_original)
     kl_loss = -0.5 * torch.mean(1 + logvar - mu.pow(2) - logvar.exp())
@@ -279,7 +285,7 @@ def validate(model: torch.nn.Module,
     # Compute averages
     avg_recon_loss = total_recon_loss / num_batches
     avg_kl_loss = total_kl_loss / num_batches
-    avg_total_loss = total_loss / num_batches
+    avg_total_loss = total_accumulated_loss / num_batches
     
     print(f"\nValidation complete: avg_loss={avg_total_loss:.4f}, avg_recon={avg_recon_loss:.4f}, avg_kl={avg_kl_loss:.4f}")
     
@@ -322,7 +328,7 @@ def train(model: torch.nn.Module,
             optimizer.zero_grad()
             total_loss.backward()
 
-            if torch.isnan(total_loss):
+            if torch.isnan(total_loss).any():
                 print(f"\nNaN loss encountered at epoch {num_epoch}, batch {batch_idx}. Stopping training.")
                 print(f"Losses: recon={recon_loss.item()}, kl={kl_loss.item()}")
                 wandb.log({'train/nan_detected': True}, step=global_step)
@@ -345,7 +351,7 @@ def train(model: torch.nn.Module,
                     'train/total_loss': total_loss.item(),
                     'train/recon_loss': recon_loss.item(),
                     'train/kl_loss': kl_loss.item(),
-                    'train/weighted_kl_loss': (train_conf['kl_weight'] * kl_loss).item(),
+                    'train/weighted_kl_loss': (compute_kl_weight(config, global_step) * kl_loss).item(),
                     'train/learning_rate': current_lr,
                     'train/epoch': num_epoch,
                     'train/mu_mean': mu.mean().item(),

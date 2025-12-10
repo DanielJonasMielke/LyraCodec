@@ -1,11 +1,14 @@
 hyperparameters:
   training:
-    learning_rate: 0.0001 # 1e-4
+    learning_rate: 0.00015 # 1.5e-4
+    lr_scheduler:
+      warmup_steps: 500
+      inv_gamma: 1.0
+      power: 0.5
     batch_size: 2
     num_epochs: 50
     weight_decay: 0.0001
-    lr_scheduler_step_size: 10
-    lr_scheduler_gamma: 0.5
+    kl_weight: 0.0001 # 1e-4
     betas: [0.8, 0.99]
     loss_log_interval: 10 # in training steps
     generate_sample_interval: 100 # in training steps
@@ -26,6 +29,8 @@ hyperparameters:
     latent_dim: 64
     c_mults: [[1, 1], [1, 2], [2, 4], [4, 8], [8, 16]]
     strides: [2, 4, 4, 8, 8]
-
 device:
   use_cuda: true
+wandb:
+  project: VocalVAE
+  run_name: null

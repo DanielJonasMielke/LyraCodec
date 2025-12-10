@@ -7,13 +7,18 @@ class StftLossConfig(TypedDict):
     win_lengths: list[int]
     perceptual_weighting: bool
 
+class LRSchedulerConfig(TypedDict):
+    warmup_steps: int
+    inv_gamma: float
+    power: float
+
 class TrainingConfig(TypedDict):
     learning_rate: float
+    lr_scheduler: LRSchedulerConfig
     batch_size: int
     num_epochs: int
     weight_decay: float
-    lr_scheduler_step_size: int
-    lr_scheduler_gamma: float
+    kl_weight: float
     loss_log_interval: int
     generate_sample_interval: int
     checkpoint_interval: int
@@ -45,8 +50,13 @@ class HyperparametersConfig(TypedDict):
 class DeviceConfig(TypedDict):
     use_cuda: bool
 
+class WandbConfig(TypedDict):
+    project: str
+    run_name: str | None
+
 
 class Config(TypedDict):
     hyperparameters: HyperparametersConfig
     device: DeviceConfig
+    wandb: WandbConfig
 

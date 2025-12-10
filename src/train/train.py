@@ -1,3 +1,4 @@
+import wandb
 import yaml
 from pathlib import Path
 
@@ -7,7 +8,23 @@ import auraloss
 
 from src.train.dataset import VocalDataset
 from src.model.VAE import VAE
-from src.types import Config
+from src.types import Config, LRSchedulerConfig
+
+def get_lr_lambda(config: LRSchedulerConfig):
+    """
+    Create a learning rate lambda function for a scheduler with warmup and inverse decay.
+    1. Warmup phase: linear increase from 0 to 1 over warmup_steps
+    2. Inverse decay phase: (1 + step / inv_gamma) ** (-power)
+    """
+    def lr_lambda(step: int) -> float:
+        # Phase 1: Warmup
+        if step < config['warmup_steps']:
+            return step / config['warmup_steps']
+        
+        # Phase 2: Inverse decay
+        return (1 + step / config['inv_gamma']) ** (-config['power'])
+    
+    return lr_lambda
 
 def load_config(config_path) -> Config:
     """Load configuration from a YAML file.
@@ -128,18 +145,40 @@ def init_optimizer(model, config: Config):
     print(f"Optimizer initialized: Adam with learning rate {training_params['learning_rate']}")
     return optimizer
 
-def compute_loss(x_recon, x_original, mu, logvar, stft_loss_fn):
+def init_scheduler(optimizer, config: Config):
+    scheduler_params = config['hyperparameters']['training']['lr_scheduler']
+    lr_lambda = get_lr_lambda(scheduler_params)
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
+    print(f"Scheduler initialized: InverseLR with warmup={scheduler_params['warmup_steps']}")
+    return scheduler
+
+def compute_loss(x_recon, x_original, mu, logvar, stft_loss_fn, config: Config):
     """
     STFT reconstruction loss + KL divergence
     """
+    kl_weight = config['hyperparameters']['training']['kl_weight']
+
     recon_loss = stft_loss_fn(x_recon, x_original)
     kl_loss = -0.5 * torch.mean(1 + logvar - mu.pow(2) - logvar.exp())
-    total_loss = recon_loss + 1e-4 * kl_loss
+    total_loss = recon_loss + kl_weight * kl_loss
     return recon_loss, kl_loss, total_loss
 
-def train(model: torch.nn, 
+def init_wandb(config: Config):
+    """
+    Initialize Weights & Biases logging.
+    """
+    wandb_config = config['wandb']
+    wandb.init(
+        project=wandb_config['project'],
+        config=config,
+        name=wandb_config['run_name']
+    )
+    print("Weights & Biases logging initialized.")
+
+def train(model: torch.nn.Module, 
           dataloader: DataLoader, 
           optimizer: torch.optim.Adam, 
+          scheduler: torch.optim.lr_scheduler.LambdaLR,
           loss_fn: auraloss.freq.MultiResolutionSTFTLoss,
           config: Config,
           device: str):
@@ -159,7 +198,7 @@ def train(model: torch.nn,
             # Move batch to device
             audio_batch = batch.to(device)
             # forward pass
-            mu, logvar, z, x_recon = model(audio_batch)
+            mu, logvar, _z, x_recon = model(audio_batch)
             # compute loss
             recon_loss, kl_loss, total_loss = compute_loss(
                 x_recon, audio_batch, mu, logvar, loss_fn
@@ -168,10 +207,22 @@ def train(model: torch.nn,
             optimizer.zero_grad()
             total_loss.backward()
             optimizer.step()
+            scheduler.step()
 
             # Logging
             if global_step % train_conf['loss_log_interval'] == 0:
-                pass
+                current_lr = scheduler.get_last_lr()[0]
+
+                wandb.log({
+                    'train/total_loss': total_loss.item(),
+                    'train/recon_loss': recon_loss.item(),
+                    'train/kl_loss': kl_loss.item(),
+                    'train/weighted_kl_loss': (train_conf['kl_weight'] * kl_loss).item(),
+                    'train/learning_rate': current_lr,
+                    'train/epoch': num_epoch,
+                    'train/step': global_step
+                }, step=global_step)
+
 
             # Generate sample audio at intervals
             if global_step % train_conf['generate_sample_interval'] == 0:
@@ -182,8 +233,6 @@ def train(model: torch.nn,
                 pass
 
             global_step += 1
-
-
 
 
 if __name__ == "__main__":
@@ -217,6 +266,16 @@ if __name__ == "__main__":
     optimizer = init_optimizer(model, config)
 
     # ============================================
+    # INITIALIZE SCHEDULER
+    # ============================================
+    scheduler = init_scheduler(optimizer, config)
+
+    # ============================================
+    # INITIALIZE WANDB
+    # ============================================
+    init_wandb(config)
+
+    # ============================================
     # Training 
     # ============================================
-    train(model, dataloader, optimizer, stft_loss, config, device)
+    train(model, dataloader, optimizer, scheduler, stft_loss, config, device)

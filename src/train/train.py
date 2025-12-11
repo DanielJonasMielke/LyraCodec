@@ -346,12 +346,13 @@ def train(model: torch.nn.Module,
             # Logging
             if global_step % train_conf['log_interval'] == 0:
                 current_lr = scheduler.get_last_lr()[0]
-
+                kl_weight = compute_kl_weight(config, global_step)
                 log_dict = {
                     'train/total_loss': total_loss.item(),
                     'train/recon_loss': recon_loss.item(),
+                    'train/kl_weight': kl_weight,
                     'train/kl_loss': kl_loss.item(),
-                    'train/weighted_kl_loss': (compute_kl_weight(config, global_step) * kl_loss).item(),
+                    'train/weighted_kl_loss': (kl_weight * kl_loss).item(),
                     'train/learning_rate': current_lr,
                     'train/epoch': num_epoch,
                     'train/mu_mean': mu.mean().item(),
@@ -398,21 +399,21 @@ def train(model: torch.nn.Module,
             }, step=global_step)
 
             # Save model checkpoint after validation
-            checkpoint_path = Path(wandb.run.dir) / f'checkpoint_epoch_{num_epoch+1}_val_loss_{val_total_loss:.4f}.pt'
+            # checkpoint_path = Path(wandb.run.dir) / f'checkpoint_epoch_{num_epoch+1}_val_loss_{val_total_loss:.4f}.pt'
 
-            torch.save({
-                'epoch': num_epoch + 1,
-                'global_step': global_step,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'scheduler_state_dict': scheduler.state_dict(),
-                'val_loss': val_total_loss,
-                'val_recon_loss': val_recon_loss,
-                'val_kl_loss': val_kl_loss,
-                'config': config
-            }, checkpoint_path)
+            # torch.save({
+            #     'epoch': num_epoch + 1,
+            #     'global_step': global_step,
+            #     'model_state_dict': model.state_dict(),
+            #     'optimizer_state_dict': optimizer.state_dict(),
+            #     'scheduler_state_dict': scheduler.state_dict(),
+            #     'val_loss': val_total_loss,
+            #     'val_recon_loss': val_recon_loss,
+            #     'val_kl_loss': val_kl_loss,
+            #     'config': config
+            # }, checkpoint_path)
             
-            print(f"\nCheckpoint saved: {checkpoint_path}")
+            # print(f"\nCheckpoint saved: {checkpoint_path}")
 
         print(f"\nEpoch {num_epoch} complete.")
     

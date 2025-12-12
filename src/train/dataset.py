@@ -98,13 +98,3 @@ class VocalDataset(Dataset):
             print(f"Error loading {file_path}: {e}")
             # Return silence on error
             return torch.zeros((2, self.samples_per_chunk))
-
-
-if __name__ == "__main__":
-    # Example usage
-    dataset = AudioChunkDataset("audio_chunks_dictionary.json")
-    
-    # Get a sample
-    sample_audio = dataset[0]
-    print(f"Sample audio shape: {sample_audio.shape}")
-    print(f"Sample audio dtype: {sample_audio.dtype}")

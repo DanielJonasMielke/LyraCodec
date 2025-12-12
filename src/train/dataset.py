@@ -1,87 +1,110 @@
 import torch
-from torch.utils.data import Dataset
 import torchaudio
-from pathlib import Path
+import json
+from torch.utils.data import Dataset
 
 class VocalDataset(Dataset):
-    def __init__(self, data_dir, target_length=90112, target_sr=44100):
-        self.data_dir = Path(data_dir)
-        self.target_length = target_length
-        self.target_sr = target_sr
+    def __init__(self, dictionary_path, sample_rate=44100, samples_per_chunk=71680, max_padding_percentage=0.2):
+        """
+        Args:
+            dictionary_path: Path to the JSON dictionary created by create_chunks_dictionary.py
+            sample_rate: Sample rate of audio (44100 for your case)
+        """
+        self.sample_rate = sample_rate
+        self.samples_per_chunk = samples_per_chunk
         
-        # Find all audio files
-        self.audio_files = list(self.data_dir.rglob("*.wav")) + \
-                          list(self.data_dir.rglob("*.mp3"))
+        # Load the dictionary
+        with open(dictionary_path, 'r') as f:
+            self.chunks_dict = json.load(f)
         
-        print(f"Found {len(self.audio_files)} audio files")
-    
-    def __len__(self):
-        return len(self.audio_files)
-    
-    def __getitem__(self, idx):
-        # Load audio
-        waveform, _sr = torchaudio.load(self.audio_files[idx])
+        # Create a flat list of all chunks with their file paths
+        self.chunk_list = []
+        for file_path, chunks in self.chunks_dict.items():
+            for chunk_info in chunks:
+                sample_start = chunk_info['start_sample']
+                sample_end = chunk_info['end_sample']
+                sample_length = sample_end - sample_start
+                padding_needed = self.samples_per_chunk - sample_length
+                if padding_needed > 0:
+                    padding_percentage = padding_needed / self.samples_per_chunk
+                    if padding_percentage > max_padding_percentage:
+                        # Skip this chunk
+                        continue
+
+                self.chunk_list.append({
+                    'file_path': file_path,
+                    'start_sample': chunk_info['start_sample'],
+                    'end_sample': chunk_info['end_sample']
+                })
         
-        # Resample if needed
-        if _sr != self.target_sr:
-            resampler = torchaudio.transforms.Resample(orig_freq=_sr, new_freq=self.target_sr)
-            waveform = resampler(waveform)
-        
-        # If mono, convert to stereo
-        if waveform.shape[0] == 1:
-            waveform = waveform.repeat(2, 1)
-        
-        # Ensure minimum length
-        if waveform.shape[1] < self.target_length:
-            padding = self.target_length - waveform.shape[1]
-            waveform = torch.nn.functional.pad(waveform, (0, padding))
-        
-        # Randomly crop to target length
-        max_start = waveform.shape[1] - self.target_length
-        if max_start > 0:
-            rand_start = torch.randint(0, max_start + 1, (1,)).item()
-        else:
-            rand_start = 0
-        
-        wav_snippet = waveform[:, rand_start: rand_start + self.target_length]
-        # Check energy and normalize
-        if not self.check_audio_energy(wav_snippet, threshold_db=-40):
-            # If silent, resample until non-silent
-            while not self.check_audio_energy(wav_snippet, threshold_db=-40):
-                rand_start = torch.randint(0, max_start + 1, (1,)).item()
-                wav_snippet = waveform[:, rand_start:rand_start + self.target_length]
-        wav_snippet = self.normalize_audio(wav_snippet)
-        return wav_snippet
-    
-    def check_audio_energy(self, waveform, threshold_db=-40):
-        """Return True if audio has sufficient energy"""
-        rms = torch.sqrt(torch.mean(waveform ** 2))
-        rms_db = 20 * torch.log10(rms + 1e-8)
-        return rms_db > threshold_db
-    
+        print(f"Loaded {len(self.chunk_list)} total chunks from {len(self.chunks_dict)} files")
+
     def normalize_audio(self, waveform, target_peak=0.95):
         """Peak normalize audio to target_peak level"""
-        # Find the maximum absolute value across all channels
         max_val = waveform.abs().max()
-        
-        # Avoid division by zero
         if max_val > 0:
             waveform = waveform * (target_peak / max_val)
-        
         return waveform
     
-
+    def __len__(self):
+        """Return total number of chunks"""
+        return len(self.chunk_list)
     
+    def __getitem__(self, idx):
+        """
+        Load and return a single chunk of audio
+        
+        Args:
+            idx: Index of chunk to load
+            
+        Returns:
+            audio: Tensor of shape (2, num_samples) for stereo at 44.1kHz
+        """
+        chunk_info = self.chunk_list[idx]
+        file_path = chunk_info['file_path']
+        start_sample = chunk_info['start_sample']
+        end_sample = chunk_info['end_sample']
+        
+        try:
+            # Load the entire audio file
+            audio, sr = torchaudio.load(file_path)
+            
+            # Verify sample rate
+            if sr != self.sample_rate:
+                raise ValueError(f"Sample rate mismatch: {sr} vs {self.sample_rate}")
+            
+            # Extract the specific chunk
+            chunk_audio = audio[:, start_sample:end_sample]
+            
+            # Check if chunk is smaller than expected
+            num_samples = chunk_audio.shape[1]
+            
+            if num_samples < self.samples_per_chunk:
+                # Pad with zeros
+                padding = self.samples_per_chunk - num_samples
+                chunk_audio = torch.nn.functional.pad(
+                    chunk_audio, 
+                    (0, padding),
+                    mode='constant',
+                    value=0
+                )
+
+            # Normalize audio
+            chunk_audio = self.normalize_audio(chunk_audio)
+            
+            return chunk_audio
+        
+        except Exception as e:
+            print(f"Error loading {file_path}: {e}")
+            # Return silence on error
+            return torch.zeros((2, self.samples_per_chunk))
+
+
 if __name__ == "__main__":
-    import matplotlib.pyplot as plt
-    dataset = VocalDataset(data_dir="./data/vocal_dataset")
-    sample = dataset[50] # 50 silent sample
-    print(f"Sample shape: {sample.shape}")  # Should be (2, target
-    print(sample)
-    # Plot waveform
-    plt.figure(figsize=(10, 4))
-    plt.plot(sample.t().numpy())
-    plt.title("Waveform")
-    plt.xlabel("Sample Index")
-    plt.ylabel("Amplitude")
-    plt.show()
+    # Example usage
+    dataset = AudioChunkDataset("audio_chunks_dictionary.json")
+    
+    # Get a sample
+    sample_audio = dataset[0]
+    print(f"Sample audio shape: {sample_audio.shape}")
+    print(f"Sample audio dtype: {sample_audio.dtype}")

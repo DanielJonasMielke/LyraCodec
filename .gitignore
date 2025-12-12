@@ -16,3 +16,5 @@ checkpoints/
 wandb/
 
 .env
+
+helper_scripts/

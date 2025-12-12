@@ -23,7 +23,6 @@ class TrainingConfig(TypedDict):
     log_interval: int
     validate_and_save_every: int
     generate_sample_interval: int
-    checkpoint_interval: int
     betas: list[float]
     stft_loss_params: StftLossConfig
 

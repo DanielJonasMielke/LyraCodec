@@ -1,3 +1,5 @@
+import random
+import numpy as np
 import wandb
 import yaml
 from pathlib import Path
@@ -9,6 +11,15 @@ import auraloss
 from src.train.dataset import VocalDataset
 from src.model.VAE import VAE
 from src.types import Config, LRSchedulerConfig
+
+def set_seed(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+set_seed()
 
 def get_lr_lambda(config: LRSchedulerConfig):
     """
@@ -63,29 +74,33 @@ def init_dataloader(config: Config) -> DataLoader:
     """
     dataset_params = config['hyperparameters']['data']
     full_dataset = VocalDataset(
-        data_dir=dataset_params['path'],
-        target_sr=dataset_params['sample_rate'],
-        target_length=dataset_params['target_length']
+        dictionary_path=dataset_params['chunks_dictionary_path'],
+        sample_rate=dataset_params['sample_rate'],
+        samples_per_chunk=dataset_params['target_length'],
+        max_padding_percentage=dataset_params['max_padding_percentage']
     )
 
     # Split into 90% train, 10% validation
     train_size = int(0.9 * len(full_dataset))
     val_size = len(full_dataset) - train_size
 
-    train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size])
+    generator = torch.Generator().manual_seed(42)
+    train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size], generator=generator)
 
     train_dataloader = DataLoader(
         train_dataset,
         batch_size=config['hyperparameters']['training']['batch_size'],
         shuffle=True,
-        num_workers=dataset_params['num_workers']
+        num_workers=dataset_params['num_workers'],
+        generator=generator
     )
 
     val_dataloader = DataLoader(
         val_dataset,
         batch_size=config['hyperparameters']['training']['batch_size'],
         shuffle=False,
-        num_workers=dataset_params['num_workers']
+        num_workers=dataset_params['num_workers'],
+        generator=generator
     )
 
     print(f"Total dataset size: {len(full_dataset)} samples")

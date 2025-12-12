@@ -2,31 +2,32 @@ hyperparameters:
   training:
     learning_rate: 0.0001 # 1e-4
     lr_scheduler:
-      warmup_steps: 2000
+      warmup_steps: 10000
       inv_gamma: 100000
-      power: 0.7
-    batch_size: 10
+      power: 0.6
+    batch_size: 12
     num_epochs: 500
     weight_decay: 0.0003
-    kl_weight: 0.0005 # 5e-4
-    kl_warmup_steps: 2400
+    kl_weight: 0.0001 # 1e-4
+    kl_warmup_steps: 5000
     betas: [0.8, 0.99]
-    validate_and_save_every: 4 # in epochs
-    log_interval: 5 # in training steps
-    generate_sample_interval: 500 # in training steps
-    checkpoint_interval: 1000 # in training steps
+    validate_and_save_every: 1 # in epochs
+    log_interval: 20 # in training steps
+    generate_sample_interval: 2000 # in training steps
     stft_loss_params:
       fft_sizes: [2048, 1024, 512, 256, 128, 64, 32]
       hop_sizes: [512, 256, 128, 64, 32, 16, 8]
       win_lengths: [2048, 1024, 512, 256, 128, 64, 32]
       perceptual_weighting: true
   data:
-    path: data/vocal_dataset/
+    path: data/new_data/
+    chunks_dictionary_path: data/audio_chunks_dictionary.json
     sample_rate: 44100
     target_length: 71680 # ~1.625 seconds
+    max_padding_percentage: 0.2
     num_workers: 4
   model:
-    in_channels: 2
+    in_channels: 1
     base_channels: 128
     latent_dim: 64
     c_mults: [[1, 1], [1, 2], [2, 4], [4, 8], [8, 16]]

@@ -6,7 +6,7 @@ class WNConv2d(nn.Module):
     """2D Convolution with weight normalization"""
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0):
         super().__init__()
-        self.conv = nn.utils.weight_norm(
+        self.conv = nn.utils.parametrizations.weight_norm(
             nn.Conv2d(in_channels, out_channels, kernel_size, stride=stride, padding=padding)
         )
         self.activation = nn.LeakyReLU(0.2) # Why use leaky relu here?
@@ -30,7 +30,7 @@ class PeriodDiscriminator(nn.Module):
             WNConv2d(1024, 1024, kernel_size=(5, 1), stride=1, padding=(2, 0)),
         ])
         
-        self.conv_post = nn.utils.weight_norm(
+        self.conv_post = nn.utils.parametrizations.weight_norm(
             nn.Conv2d(1024, 1, kernel_size=(3, 1), stride=1, padding=(1, 0))
         )
 

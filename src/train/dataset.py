@@ -58,7 +58,7 @@ class VocalDataset(Dataset):
             idx: Index of chunk to load
             
         Returns:
-            audio: Tensor of shape (2, num_samples) for stereo at 44.1kHz
+            audio: Tensor of shape (1, num_samples) for mono at 44.1kHz
         """
         chunk_info = self.chunk_list[idx]
         file_path = chunk_info['file_path']
@@ -72,6 +72,10 @@ class VocalDataset(Dataset):
             # Verify sample rate
             if sr != self.sample_rate:
                 raise ValueError(f"Sample rate mismatch: {sr} vs {self.sample_rate}")
+            
+            # Convert stereo to mono by averaging channels
+            if audio.shape[0] > 1:
+                audio = audio.mean(dim=0, keepdim=True)
             
             # Extract the specific chunk
             chunk_audio = audio[:, start_sample:end_sample]
@@ -96,5 +100,5 @@ class VocalDataset(Dataset):
         
         except Exception as e:
             print(f"Error loading {file_path}: {e}")
-            # Return silence on error
-            return torch.zeros((2, self.samples_per_chunk))
+            # Return silence on error (mono audio)
+            return torch.zeros((1, self.samples_per_chunk))

@@ -1,12 +1,15 @@
 import torch
 import torch.nn as nn
 
+from singer_identity import load_model
+from singer_identity.utils.core import freeze_params
+
 from .SnakeActivation import SnakeActivation
 from .EncoderBlock import EncoderBlock
 from .DecoderBlock import DecoderBlock
+from .SingerProjection import SingerProjection
 
-from singer_identity import load_model
-from singer_identity.utils.core import freeze_params
+
 
 class VAE(nn.Module):
     def __init__(self,
@@ -25,6 +28,12 @@ class VAE(nn.Module):
         self.singer_identity_encoder = load_model('byol')
         self.singer_identity_encoder.eval()
         freeze_params(self.singer_identity_encoder)
+
+        self.singer_identity_projection = SingerProjection(
+            input_dim=1000,
+            output_dim=64,
+            linear=False
+        )
         
         # ----------------- ENCODER PROPERTIES ----------------- 
         # First layer: stereo audio (2 channels) -> 128 feature channels
@@ -166,9 +175,8 @@ class VAE(nn.Module):
         z = self.reparameterization(mu, logvar)
         x_audio = x.squeeze(1)  # Assuming input x has shape (B, 1, L) -> (B, L)
         singer_identity_features = self.singer_identity_encoder(x_audio)
-        print("Singer identity features shape:", singer_identity_features.shape)
-        # FiLM coniditioning goes here
-        # ... (not implemented yet)
+        singer_identity_proj = self.singer_identity_projection(singer_identity_features)
+        print("Singer identity projected shape:", singer_identity_proj.shape)
         x_recon = self.decode(z, encoder_shapes)
         return mu, logvar, z, x_recon
     

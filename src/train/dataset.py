@@ -67,7 +67,7 @@ class VocalDataset(Dataset):
         
         try:
             # Load the entire audio file
-            audio, sr = torchaudio.load(file_path)
+            audio, sr = torchaudio.load(file_path, num_frames=end_sample)
             
             # Verify sample rate
             if sr != self.sample_rate:
@@ -93,8 +93,8 @@ class VocalDataset(Dataset):
                     value=0
                 )
 
-            # Normalize audio
-            chunk_audio = self.normalize_audio(chunk_audio)
+            # Normalize audio (disabled to preserve original dynamics)
+            # chunk_audio = self.normalize_audio(chunk_audio)
             
             return chunk_audio
         

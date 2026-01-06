@@ -18,3 +18,7 @@ wandb/
 .env
 
 helper_scripts/
+
+singer_identity/
+
+pretrained_models/

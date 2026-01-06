@@ -7,7 +7,7 @@ from .DecoderBlock import DecoderBlock
 
 class VAE(nn.Module):
     def __init__(self,
-                 in_channels=2,
+                 in_channels=1,
                  base_channels=128,
                  latent_dim=64,
                  c_mults=[

@@ -5,6 +5,9 @@ from .SnakeActivation import SnakeActivation
 from .EncoderBlock import EncoderBlock
 from .DecoderBlock import DecoderBlock
 
+from singer_identity import load_model
+from singer_identity.utils.core import freeze_params
+
 class VAE(nn.Module):
     def __init__(self,
                  in_channels=1,
@@ -17,6 +20,11 @@ class VAE(nn.Module):
         super().__init__()
         
         self.in_channels = in_channels
+
+        # ----------------- Singer Identity Model ----------------- 
+        self.singer_identity_encoder = load_model('byol')
+        self.singer_identity_encoder.eval()
+        freeze_params(self.singer_identity_encoder)
         
         # ----------------- ENCODER PROPERTIES ----------------- 
         # First layer: stereo audio (2 channels) -> 128 feature channels
@@ -156,6 +164,11 @@ class VAE(nn.Module):
     def forward(self, x) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         mu, logvar, encoder_shapes = self.encode(x)
         z = self.reparameterization(mu, logvar)
+        x_audio = x.squeeze(1)  # Assuming input x has shape (B, 1, L) -> (B, L)
+        singer_identity_features = self.singer_identity_encoder(x_audio)
+        print("Singer identity features shape:", singer_identity_features.shape)
+        # FiLM coniditioning goes here
+        # ... (not implemented yet)
         x_recon = self.decode(z, encoder_shapes)
         return mu, logvar, z, x_recon
     

@@ -8,6 +8,7 @@ from .SnakeActivation import SnakeActivation
 from .EncoderBlock import EncoderBlock
 from .DecoderBlock import DecoderBlock
 from .SingerProjection import SingerProjection
+from .SingerConditioningModule import SingerConditioningModule
 
 
 
@@ -33,6 +34,12 @@ class VAE(nn.Module):
             input_dim=1000,
             output_dim=64,
             linear=False
+        )
+
+        self.singer_conditioning = SingerConditioningModule(
+            latent_dim=64, 
+            intermediate_dim=256, 
+            num_blocks=2
         )
         
         # ----------------- ENCODER PROPERTIES ----------------- 
@@ -177,8 +184,9 @@ class VAE(nn.Module):
         x_audio = x.squeeze(1)  # Assuming input x has shape (B, 1, L) -> (B, L)
         singer_identity_features = self.singer_identity_encoder(x_audio)
         singer_identity_proj = self.singer_identity_projection(singer_identity_features)
+        z_conditioned = self.singer_conditioning(z, singer_identity_proj)
 
-        x_recon = self.decode(z, encoder_shapes)
+        x_recon = self.decode(z_conditioned, encoder_shapes)
         return mu, logvar, z, x_recon
     
 if __name__ == '__main__':

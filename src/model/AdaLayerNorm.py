@@ -12,13 +12,13 @@ class AdaLayerNorm(nn.Module):
     Returns:
         - conditioned features [B, T, C]
     """
-    def __init__(self, condition_dim, embedding_dim, eps=1e-6):
+    def __init__(self, embedding_dim, eps=1e-6):
         super().__init__()
         self.eps = eps
         self.dim = embedding_dim
         
-        self.scale = nn.Linear(condition_dim, embedding_dim)
-        self.shift = nn.Linear(condition_dim, embedding_dim)
+        self.scale = nn.Linear(embedding_dim, embedding_dim)
+        self.shift = nn.Linear(embedding_dim, embedding_dim)
         
         # Initialize scale to output 1s, shift to output 0s
         torch.nn.init.ones_(self.scale.weight)

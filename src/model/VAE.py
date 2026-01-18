@@ -173,17 +173,18 @@ class VAE(nn.Module):
     def forward(self, x) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         mu, logvar, encoder_shapes = self.encode(x)
         z = self.reparameterization(mu, logvar)
+
         x_audio = x.squeeze(1)  # Assuming input x has shape (B, 1, L) -> (B, L)
         singer_identity_features = self.singer_identity_encoder(x_audio)
         singer_identity_proj = self.singer_identity_projection(singer_identity_features)
-        print("Singer identity projected shape:", singer_identity_proj.shape)
+
         x_recon = self.decode(z, encoder_shapes)
         return mu, logvar, z, x_recon
     
 if __name__ == '__main__':
     # test forward pass shapes
     model = VAE()
-    x = torch.randn(2, 2, 90112)  # batch_size=2, in_channels=2, length=90112
+    x = torch.randn(2, 1, 71680)  # batch_size=2, in_channels=1, length=71680
     mu, logvar, z, x_recon = model(x)
     print("Input shape:", x.shape)
     print("Mu shape:", mu.shape)

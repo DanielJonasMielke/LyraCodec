@@ -4,13 +4,7 @@ from .AdaLayerNorm import AdaLayerNorm
 
 class ConvNeXtBlock(nn.Module):
     """
-    ConvNeXt block with adaptive conditioning.
-    
-    Flow:
-    1. Depthwise conv (temporal patterns per dimension)
-    2. AdaLayerNorm (FiLM conditioning)
-    3. Pointwise conv with expansion (mix dimensions)
-    4. Residual connection
+    ConvNeXt block with singer conditioning.
     """
     def __init__(self, latent_dim, intermediate_dim, layer_scale_init_value=1e-6):
         """
@@ -33,33 +27,25 @@ class ConvNeXtBlock(nn.Module):
 
 
     def forward(self, x, condition):
-        """
-        x: [B, C, T] - latent features (channels FIRST)
-        condition: [B, C] - singer embedding
-        
-        Returns: [B, C, T]
-        """
         residual = x
         
-        # Step 1: Depthwise conv
-        x = self.dwconv(x)  # [B, C, T] -> [B, C, T]
+        # Apply AdaLayerNorm with conditioning
+        x = torch.transpose(x, -1, -2) # [B, T, C]
+        x = self.norm(x, condition)     # [B, T, C]
+        x = torch.transpose(x, -1, -2)  # [B, C, T]
         
-        # Step 2: Transpose for LayerNorm (needs channels LAST)
-        x = torch.transpose(x, -1, -2)
+        # Apply depthwise conv on temporal patterns
+        x = self.dwconv(x)  # [B, C, T]
         
-        # Step 3: Apply AdaLayerNorm with condition
-        x = self.norm(x, condition)
+        # Mix channels
+        x = torch.transpose(x, -1, -2)  # [B, T, C]
+        x = self.mix(x)                 # [B, T, C]
         
-        # Step 4: Pointwise expansion and mixing
-        x = self.mix(x)
+        # Apply layer scale
+        x = self.gamma * x              # [B, T, C]
         
-        # Step 5: Apply layer scale if it exists
-        x = self.gamma * x
-        
-        # Step 6: Transpose back to channels-first
-        x = torch.transpose(x, -1, -2)
-
-        # Step 7: Residual connection
+        # Residual connection
+        x = torch.transpose(x, -1, -2)  # [B, C, T]
         x = residual + x
         
         return x
